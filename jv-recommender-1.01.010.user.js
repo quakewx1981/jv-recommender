@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         JAV 智能推荐 (javdb / javbus)
 // @namespace    https://github.com/quakewx1981/jv-recommender
-// @version      1.01.009
+// @version      1.01.010
 // @description  根据影片评分与热度综合评定，推荐 10 部影片；支持分类/关键字筛选与随机换一批。
 // @author       浮云
 // @match        https://www.javdb.com/*
@@ -23,7 +23,7 @@
 // @connect      *
 // 升级版本时，请同步修改下方两个 URL 里的文件名（保持版本号一致）
 // @updateURL    https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender.meta.js
-// @downloadURL  https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender-1.01.009.user.js
+// @downloadURL  https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender-1.01.010.user.js
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -35,7 +35,7 @@
   /* ============================== 配置区 ============================== */
   // 想调权重 / 抓几页 / 改选择器，都改这里。
   const CONFIG = {
-    version: '1.01.009',
+    version: '1.01.010',
     recommendCount: 10,      // 推荐数量
     fetchPages: 5,           // HTML 数据源最多抓取的列表页数（候选池大小）
     searchPages: 3,          // 搜索源抓取页数（每页 pageSize 部，实测 3 页约 120 部候选）
@@ -727,9 +727,16 @@
           const m = hdr.match(/content-type:\s*([^;\r\n]+)/);
           const type = m ? m[1].trim() : 'image/jpeg';
           const blob = new Blob([r.response], { type });
-          img.src = URL.createObjectURL(blob);
-          img.style.opacity = '1';
-          log('封面成功: blob size=' + blob.size);
+          // 隔离世界里 createObjectURL 生成的 blob URL 主页面 img 加载不到，
+          // 改用 FileReader 转 data URI（base64），主页面可直接显示。
+          const reader = new FileReader();
+          reader.onload = () => {
+            img.src = reader.result;
+            img.style.opacity = '1';
+            log('封面成功: dataURL len=' + reader.result.length);
+          };
+          reader.onerror = () => { log('封面 dataURL 失败: ' + url); };
+          reader.readAsDataURL(blob);
         } catch (e) { log('封面 blob 失败: ' + e.message); }
       },
       onerror: () => { log('封面网络错误: ' + url); },
