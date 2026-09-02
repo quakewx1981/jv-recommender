@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         JAV 智能推荐 (javdb / javbus)
 // @namespace    https://github.com/quakewx1981/jv-recommender
-// @version      1.01.005
+// @version      1.01.006
 // @description  根据影片评分与热度综合评定，推荐 10 部影片；支持分类/关键字筛选与随机换一批。
 // @author       浮云
 // @match        https://www.javdb.com/*
@@ -21,7 +21,7 @@
 // @connect      www.javbus.com
 // 升级版本时，请同步修改下方两个 URL 里的文件名（保持版本号一致）
 // @updateURL    https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender.meta.js
-// @downloadURL  https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender-1.01.005.user.js
+// @downloadURL  https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender-1.01.006.user.js
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -33,7 +33,7 @@
   /* ============================== 配置区 ============================== */
   // 想调权重 / 抓几页 / 改选择器，都改这里。
   const CONFIG = {
-    version: '1.01.005',
+    version: '1.01.006',
     recommendCount: 10,      // 推荐数量
     fetchPages: 5,           // HTML 数据源最多抓取的列表页数（候选池大小）
     searchPages: 3,          // 搜索源抓取页数（每页 pageSize 部，实测 3 页约 120 部候选）
@@ -142,7 +142,8 @@
   /* ============================== JavDB App API ============================== */
   // 逆向自 JavDB.apk 1.9.28：jdsignature = "{ts}.{suffix}.{md5(ts+prefix)}"
   const JDB_API = {
-    host: 'https://javdb.com',
+    host: 'https://javdb.com',        // 当前生效 host（首次成功后更新为可用节点）
+    hosts: ['https://javdb.com', 'https://jdforrepam.com'], // 主站 + 镜像，任一失败自动切换（借鉴 javdb-cli 的 host 探测）
     prefix: '71cf27bb3c0bcdf207b64abecddc970098c7421ee7203b9cdae54478478a199e7d5a6e1a57691123c1a931c057842fb73ba3b3c83bcd69c17ccf174081e3d8aa',
     suffix: 'lpw6vgqzsp',
     appVersion: '1.9.28',
@@ -211,28 +212,38 @@
     };
   }
 
-  // GM_xhr GET JSON，返回 envelope.data（已解析对象）
+  // GM_xhr GET JSON，返回 envelope.data（已解析对象）；主站失败自动切换镜像
   function jdbApiGet(path, extraParams) {
     const params = Object.assign(jdbPublicParams(), extraParams || {});
     const qs = Object.keys(params).map((k) => encodeURIComponent(k) + '=' + encodeURIComponent(params[k])).join('&');
-    const url = JDB_API.host + path + (qs ? '?' + qs : '');
     const sig = jdbSign();
-    return new Promise((resolve, reject) => {
-      GM_xmlhttpRequest({
-        method: 'GET',
-        url,
-        headers: { 'jdsignature': sig, 'user-agent': JDB_API.userAgent, 'accept-language': 'en' },
-        onload: (r) => {
-          if (r.status < 200 || r.status >= 300) { reject(new Error('HTTP ' + r.status)); return; }
-          try {
-            const env = JSON.parse(r.responseText);
-            if (![1, true, '1'].includes(env.success)) { reject(new Error('API ' + (env.action || 'err') + ': ' + (env.message || ''))); return; }
-            resolve(env.data || {});
-          } catch (e) { reject(new Error('JSON 解析失败')); }
-        },
-        onerror: () => reject(new Error('网络错误')),
+    const hosts = JDB_API.hosts;
+    function tryHost(i) {
+      if (i >= hosts.length) return Promise.reject(new Error('全部 host 失败: ' + path));
+      const url = hosts[i] + path + (qs ? '?' + qs : '');
+      return new Promise((resolve, reject) => {
+        GM_xmlhttpRequest({
+          method: 'GET',
+          url,
+          headers: { 'jdsignature': sig, 'user-agent': JDB_API.userAgent, 'accept-language': 'en' },
+          onload: (r) => {
+            if (r.status < 200 || r.status >= 300) { reject(new Error('HTTP ' + r.status)); return; }
+            try {
+              const env = JSON.parse(r.responseText);
+              // 业务错误（签名/参数）不重试，直接抛出
+              if (![1, true, '1'].includes(env.success)) { reject(new Error('API ' + (env.action || 'err') + ': ' + (env.message || ''))); return; }
+              JDB_API.host = hosts[i]; // 记住可用 host，后续请求优先
+              resolve(env.data || {});
+            } catch (e) { reject(new Error('JSON 解析失败')); }
+          },
+          onerror: () => reject(new Error('网络错误')),
+        });
+      }).catch((e) => {
+        log('API host 失败:', hosts[i], '→', e.message, (i + 1 < hosts.length ? '尝试镜像' : '已无备用'));
+        return tryHost(i + 1);
       });
-    });
+    }
+    return tryHost(0);
   }
 
   // 把 App API 影片对象映射为内部结构（列表无评分，rating 稍后补全）
@@ -244,7 +255,7 @@
       cover: m.thumb_url || m.cover_url || '',
       rating: null,
       position: baseOffset + i + 1,
-      url: m.id ? 'https://javdb.com/v/' + m.id : '',
+      url: m.id ? origin() + '/v/' + m.id : '',
       source: 'api',
       _apiId: m.id || '',
     };
