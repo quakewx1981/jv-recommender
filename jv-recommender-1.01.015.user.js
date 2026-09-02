@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         JAV 智能推荐 (javdb / javbus)
 // @namespace    https://github.com/quakewx1981/jv-recommender
-// @version      1.01.014
+// @version      1.01.015
 // @description  根据影片评分与热度综合评定，推荐 10 部影片；支持分类/关键字筛选与随机换一批。
 // @author       浮云
 // @match        https://www.javdb.com/*
@@ -23,7 +23,7 @@
 // @connect      *
 // 升级版本时，请同步修改下方两个 URL 里的文件名（保持版本号一致）
 // @updateURL    https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender.meta.js
-// @downloadURL  https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender-1.01.014.user.js
+// @downloadURL  https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender-1.01.015.user.js
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -35,7 +35,7 @@
   /* ============================== 配置区 ============================== */
   // 想调权重 / 抓几页 / 改选择器，都改这里。
   const CONFIG = {
-    version: '1.01.014',
+    version: '1.01.015',
     recommendCount: 10,      // 推荐数量
     fetchPages: 5,           // HTML 数据源最多抓取的列表页数（候选池大小）
     searchPages: 3,          // 搜索源抓取页数（每页 pageSize 部，实测 3 页约 120 部候选）
@@ -722,25 +722,30 @@
     return 'image/jpeg';
   }
 
-  // 直接用浏览器原生 <img> 加载封面。
-  // 脚本运行在 javdb 页面内，浏览器会自动带 referer=javdb.com，正好满足 CDN 防盗链；
-  // 不再用 GM_xhr 取二进制——实测本环境 GM_xhr 会把图片二进制损坏（文件头非 ff d8 ff），dataURL 无法解码。
+  // javdb 的 App API 返回的 cover 指向 tp.spfcas.com（混淆 CDN，返回加密数据，无法直接当图片显示）。
+  // 而网页真实封面在 c0.jdbstatic.com，二者文件名（/{xx}/{xxx}.jpg）完全一致，仅域名/路径不同。
+  // 故将 cover URL 改写为 jdbstatic 真实地址即可；jdbstatic 不校验 referer，浏览器原生 img 可直接显示。
+  function realCover(url) {
+    if (!url) return url;
+    return url.replace(/^https?:\/\/[^/]+\/[^/]+\/small_covers\//, 'https://c0.jdbstatic.com/covers/');
+  }
+
   function loadCover(img, url) {
     if (!url) { log('封面: URL 为空'); return; }
-    log('封面加载: ' + url);
+    const real = realCover(url);
+    log('封面加载: ' + real + (real !== url ? ' (源 ' + url + ')' : ''));
     let tried = 0;
     img.onload = () => {
-      log('封面 img.onload: ' + url + ' w=' + img.naturalWidth + ' h=' + img.naturalHeight);
+      log('封面 img.onload: ' + real + ' w=' + img.naturalWidth + ' h=' + img.naturalHeight);
       img.style.opacity = '1';
     };
     img.onerror = () => {
-      log('封面 img.onerror: ' + url + ' | 重试=' + tried);
-      if (tried === 0) { tried = 1; img.referrerPolicy = 'no-referrer'; img.src = url; }
+      log('封面 img.onerror: ' + real + ' | 重试=' + tried);
+      if (tried === 0) { tried = 1; img.referrerPolicy = 'no-referrer'; img.src = real; }
       else { img.style.display = 'none'; }
     };
-    // 默认不设 referrerpolicy：浏览器发送完整 referer=javdb.com/...，与页面自身 img 一致，可过防盗链
     img.removeAttribute('referrerpolicy');
-    img.src = url;
+    img.src = real;
   }
 
   function render(list, mode) {
