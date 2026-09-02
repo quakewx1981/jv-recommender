@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         JAV 智能推荐 (javdb / javbus)
 // @namespace    https://github.com/quakewx1981/jv-recommender
-// @version      1.01.001
+// @version      1.01.002
 // @description  根据影片评分与热度综合评定，推荐 10 部影片；支持分类/关键字筛选与随机换一批。
 // @author       浮云
 // @match        https://www.javdb.com/*
@@ -21,7 +21,7 @@
 // @connect      www.javbus.com
 // 升级版本时，请同步修改下方两个 URL 里的文件名（保持版本号一致）
 // @updateURL    https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender.meta.js
-// @downloadURL  https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender-1.01.001.user.js
+// @downloadURL  https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender-1.01.002.user.js
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -106,8 +106,10 @@
       name: 'javdb',
       // 候选来源类型
       sources: [
-        { id: 'rank_week', label: '排行榜(周)' },
-        { id: 'rank_month', label: '排行榜(月)' },
+        { id: 'hot_daily', label: '热播日榜' },
+        { id: 'hot_weekly', label: '热播周榜' },
+        { id: 'hot_monthly', label: '热播月榜' },
+        { id: 'top250', label: 'Top250' },
         { id: 'search', label: '关键字搜索' },
         { id: 'current', label: '当前页面' },
       ],
@@ -116,8 +118,10 @@
       buildUrl(sourceId, keyword, page) {
         const p = page > 1 ? '&page=' + page : '';
         switch (sourceId) {
-          case 'rank_week': return origin() + '/rankings?period=week' + (page > 1 ? '?page=' + page : '');
-          case 'rank_month': return origin() + '/rankings?period=month' + (page > 1 ? '?page=' + page : '');
+          case 'hot_daily': return origin() + '/advanced_search?laosiji_rank=playback&lsj_period=daily&lsj_filter_by=high_score' + p;
+          case 'hot_weekly': return origin() + '/advanced_search?laosiji_rank=playback&lsj_period=weekly&lsj_filter_by=high_score' + p;
+          case 'hot_monthly': return origin() + '/advanced_search?laosiji_rank=playback&lsj_period=monthly&lsj_filter_by=high_score' + p;
+          case 'top250': return origin() + '/advanced_search?handleTop=1&handleType=all&type_value=' + p;
           case 'search': return origin() + '/search?q=' + encodeURIComponent(keyword || '') + p;
           case 'current': return origin() + location.pathname + location.search + (page > 1 ? (location.search ? '&' : '?') + 'page=' + page : '');
           default: return origin() + '/?page=' + page;
