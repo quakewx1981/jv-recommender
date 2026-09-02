@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         JAV 智能推荐 (javdb / javbus)
 // @namespace    https://github.com/quakewx1981/jv-recommender
-// @version      1.01.002
+// @version      1.01.003
 // @description  根据影片评分与热度综合评定，推荐 10 部影片；支持分类/关键字筛选与随机换一批。
 // @author       浮云
 // @match        https://www.javdb.com/*
@@ -21,7 +21,7 @@
 // @connect      www.javbus.com
 // 升级版本时，请同步修改下方两个 URL 里的文件名（保持版本号一致）
 // @updateURL    https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender.meta.js
-// @downloadURL  https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender-1.01.002.user.js
+// @downloadURL  https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender-1.01.003.user.js
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -33,9 +33,10 @@
   /* ============================== 配置区 ============================== */
   // 想调权重 / 抓几页 / 改选择器，都改这里。
   const CONFIG = {
-    version: '1.01.001',
+    version: '1.01.003',
     recommendCount: 10,      // 推荐数量
-    fetchPages: 5,           // 每个数据源最多抓取的列表页数（候选池大小）
+    fetchPages: 5,           // HTML 数据源最多抓取的列表页数（候选池大小）
+    scoreFetchN: 15,         // App API 源：对前 N 部并行补全评分
     pageDelay: 250,          // 翻页抓取间隔(ms)，避免被限流
     weights: { rating: 0.6, popularity: 0.4 }, // 综合评分权重
     debug: true,             // 面板内调试日志
@@ -99,30 +100,137 @@
     return new DOMParser().parseFromString(html, 'text/html');
   }
 
+  /* ============================== JavDB App API ============================== */
+  // 逆向自 JavDB.apk 1.9.28：jdsignature = "{ts}.{suffix}.{md5(ts+prefix)}"
+  const JDB_API = {
+    host: 'https://javdb.com',
+    prefix: '71cf27bb3c0bcdf207b64abecddc970098c7421ee7203b9cdae54478478a199e7d5a6e1a57691123c1a931c057842fb73ba3b3c83bcd69c17ccf174081e3d8aa',
+    suffix: 'lpw6vgqzsp',
+    appVersion: '1.9.28',
+    appVersionNumber: '10928',
+    userAgent: 'Dart/3.4 (dart:io)',
+  };
+
+  function md5(s) {
+    function rotateLeft(l, r) { return (l << r) | (l >>> (32 - r)); }
+    function add(x, y) { const l = (x & 0xffff) + (y & 0xffff); const m = (x >>> 16) + (y >>> 16) + (l >>> 16); return (m << 16) | (l & 0xffff); }
+    function cmn(q, a, b, x, s, t) { a = add(a, q); a = add(a, x); a = add(a, t); a = rotateLeft(a, s); a = add(a, b); return a; }
+    function ff(a, b, c, d, x, s, t) { return cmn((b & c) | ((~b) & d), a, b, x, s, t); }
+    function gg(a, b, c, d, x, s, t) { return cmn((b & d) | (c & (~d)), a, b, x, s, t); }
+    function hh(a, b, c, d, x, s, t) { return cmn(b ^ c ^ d, a, b, x, s, t); }
+    function ii(a, b, c, d, x, s, t) { return cmn(c ^ (b | (~d)), a, b, x, s, t); }
+    function md5cycle(x, k) {
+      let a = x[0], b = x[1], c = x[2], d = x[3];
+      a = ff(a, b, c, d, k[0], 7, -680876936); d = ff(d, a, b, c, k[1], 12, -389564586); c = ff(c, d, a, b, k[2], 17, 606105819); b = ff(b, c, d, a, k[3], 22, -1044525330);
+      a = ff(a, b, c, d, k[4], 7, -176418897); d = ff(d, a, b, c, k[5], 12, 1200080426); c = ff(c, d, a, b, k[6], 17, -1473231341); b = ff(b, c, d, a, k[7], 22, -45705983);
+      a = ff(a, b, c, d, k[8], 7, 1770035416); d = ff(d, a, b, c, k[9], 12, -1958414417); c = ff(c, d, a, b, k[10], 17, -42063); b = ff(b, c, d, a, k[11], 22, -1990404162);
+      a = ff(a, b, c, d, k[12], 7, 1804603682); d = ff(d, a, b, c, k[13], 12, -40341101); c = ff(c, d, a, b, k[14], 17, -1502002290); b = ff(b, c, d, a, k[15], 22, 1236535329);
+      a = gg(a, b, c, d, k[1], 5, -165796510); d = gg(d, a, b, c, k[6], 9, -1069501632); c = gg(c, d, a, b, k[11], 14, 643717713); b = gg(b, c, d, a, k[0], 20, -373897302);
+      a = gg(a, b, c, d, k[5], 5, -701558691); d = gg(d, a, b, c, k[10], 9, 38016083); c = gg(c, d, a, b, k[15], 14, -660478335); b = gg(b, c, d, a, k[4], 20, -405537848);
+      a = gg(a, b, c, d, k[9], 5, 568446438); d = gg(d, a, b, c, k[14], 9, -1019803690); c = gg(c, d, a, b, k[3], 14, -187363961); b = gg(b, c, d, a, k[8], 20, 1163531501);
+      a = gg(a, b, c, d, k[13], 5, -1444681467); d = gg(d, a, b, c, k[2], 9, -51403784); c = gg(c, d, a, b, k[7], 14, 1735328473); b = gg(b, c, d, a, k[12], 20, -1926607734);
+      a = hh(a, b, c, d, k[5], 4, -378558); d = hh(d, a, b, c, k[8], 11, -2022574463); c = hh(c, d, a, b, k[11], 16, 1839030562); b = hh(b, c, d, a, k[14], 23, -35309556);
+      a = hh(a, b, c, d, k[1], 4, -1530992060); d = hh(d, a, b, c, k[4], 11, 1272893353); c = hh(c, d, a, b, k[7], 16, -155497632); b = hh(b, c, d, a, k[10], 23, -1094730640);
+      a = hh(a, b, c, d, k[13], 4, 681279174); d = hh(d, a, b, c, k[0], 11, -358537222); c = hh(c, d, a, b, k[3], 16, -722521979); b = hh(b, c, d, a, k[6], 23, 76029189);
+      a = hh(a, b, c, d, k[9], 4, -640364487); d = hh(d, a, b, c, k[12], 11, -421815835); c = hh(c, d, a, b, k[15], 16, 530742520); b = hh(b, c, d, a, k[2], 23, -995338651);
+      a = ii(a, b, c, d, k[0], 6, -198630844); d = ii(d, a, b, c, k[7], 10, 1126891415); c = ii(c, d, a, b, k[14], 15, -1416354905); b = ii(b, c, d, a, k[5], 21, -57434055);
+      a = ii(a, b, c, d, k[12], 6, 1700485571); d = ii(d, a, b, c, k[3], 10, -1894986606); c = ii(c, d, a, b, k[10], 15, -1051523); b = ii(b, c, d, a, k[1], 21, -2054922799);
+      a = ii(a, b, c, d, k[8], 6, 1873313359); d = ii(d, a, b, c, k[15], 10, -30611744); c = ii(c, d, a, b, k[6], 15, -1560198380); b = ii(b, c, d, a, k[13], 21, 1309151649);
+      a = ii(a, b, c, d, k[4], 6, -145523070); d = ii(d, a, b, c, k[11], 10, -1120210379); c = ii(c, d, a, b, k[2], 15, 718787259); b = ii(b, c, d, a, k[9], 21, -343485551);
+      x[0] = add(a, x[0]); x[1] = add(b, x[1]); x[2] = add(c, x[2]); x[3] = add(d, x[3]);
+    }
+    function md5blk(s) { const m = []; for (let i = 0; i < 64; i += 4) m.push(s.charCodeAt(i) | (s.charCodeAt(i + 1) << 8) | (s.charCodeAt(i + 2) << 16) | (s.charCodeAt(i + 3) << 24)); return m; }
+    function md51(s) {
+      const nblk = ((s.length + 8) >> 6) + 1; const blks = []; for (let i = 0; i < nblk * 16; i++) blks.push(0);
+      for (let i = 0; i < s.length; i++) blks[i >> 2] |= s.charCodeAt(i) << ((i % 4) * 8);
+      blks[s.length >> 2] |= 0x80 << ((s.length % 4) * 8);
+      blks[nblk * 16 - 2] = s.length * 8;
+      const x = [1732584193, -271733879, -1732584194, 271733878];
+      for (let i = 0; i < blks.length; i += 16) md5cycle(x, blks.slice(i, i + 16));
+      return x;
+    }
+    function rhex(n) { let s = '', j; for (let i = 0; i < 4; i++) { j = (n >>> (i * 8)) & 0xff; s += ('0' + j.toString(16)).slice(-2); } return s; }
+    const b = md51(s); let out = ''; for (let i = 0; i < 4; i++) out += rhex(b[i]); return out;
+  }
+
+  function jdbSign(ts) {
+    ts = ts || Math.floor(Date.now() / 1000);
+    return ts + '.' + JDB_API.suffix + '.' + md5(String(ts) + JDB_API.prefix);
+  }
+
+  function jdbPublicParams() {
+    return {
+      app_channel: 'official',
+      app_version: JDB_API.appVersion,
+      app_version_number: JDB_API.appVersionNumber,
+      platform: 'android',
+      system_version: '13',
+      device_model: 'Pixel 6',
+      device_name: 'Pixel',
+      device_uuid: 'abcd1234abcd1234',
+      lang: 'en',
+    };
+  }
+
+  // GM_xhr GET JSON，返回 envelope.data（已解析对象）
+  function jdbApiGet(path, extraParams) {
+    const params = Object.assign(jdbPublicParams(), extraParams || {});
+    const qs = Object.keys(params).map((k) => encodeURIComponent(k) + '=' + encodeURIComponent(params[k])).join('&');
+    const url = JDB_API.host + path + (qs ? '?' + qs : '');
+    const sig = jdbSign();
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url,
+        headers: { 'jdsignature': sig, 'user-agent': JDB_API.userAgent, 'accept-language': 'en' },
+        onload: (r) => {
+          if (r.status < 200 || r.status >= 300) { reject(new Error('HTTP ' + r.status)); return; }
+          try {
+            const env = JSON.parse(r.responseText);
+            if (![1, true, '1'].includes(env.success)) { reject(new Error('API ' + (env.action || 'err') + ': ' + (env.message || ''))); return; }
+            resolve(env.data || {});
+          } catch (e) { reject(new Error('JSON 解析失败')); }
+        },
+        onerror: () => reject(new Error('网络错误')),
+      });
+    });
+  }
+
+  // 把 App API 影片对象映射为内部结构（列表无评分，rating 稍后补全）
+  function jdbMovieFromApi(m, baseOffset, i) {
+    return {
+      id: m.id || '',
+      uid: m.number || '',
+      title: (m.title || m.origin_title || '').trim(),
+      cover: m.thumb_url || m.cover_url || '',
+      rating: null,
+      position: baseOffset + i + 1,
+      url: m.id ? 'https://javdb.com/v/' + m.id : '',
+      source: 'api',
+      _apiId: m.id || '',
+    };
+  }
+
   /* ============================== 站点适配器 ============================== */
   // 每个适配器负责：构造数据源 URL、解析单页影片。
   const adapters = {
     javdb: {
       name: 'javdb',
-      // 候选来源类型
       sources: [
-        { id: 'hot_daily', label: '热播日榜' },
-        { id: 'hot_weekly', label: '热播周榜' },
-        { id: 'hot_monthly', label: '热播月榜' },
-        { id: 'top250', label: 'Top250' },
-        { id: 'search', label: '关键字搜索' },
-        { id: 'current', label: '当前页面' },
+        { id: 'hot_daily', label: '热播日榜', mode: 'api', apiPath: '/api/v1/rankings/playback', apiParams: { filter_by: 'high_score', period: 'daily' } },
+        { id: 'hot_weekly', label: '热播周榜', mode: 'api', apiPath: '/api/v1/rankings/playback', apiParams: { filter_by: 'high_score', period: 'weekly' } },
+        { id: 'hot_monthly', label: '热播月榜', mode: 'api', apiPath: '/api/v1/rankings/playback', apiParams: { filter_by: 'high_score', period: 'monthly' } },
+        { id: 'top250', label: 'Top250', mode: 'html' },
+        { id: 'search', label: '关键字搜索', mode: 'api', apiPath: '/api/v2/search', apiParams: (kw) => ({ q: kw || '' }) },
+        { id: 'current', label: '当前页面', mode: 'html' },
       ],
       // 常见分类（按名称走搜索，近似分类筛选）
       categories: ['剧情', '爱情', '喜剧', '动作', '科幻', '恐怖', '奇幻', '动画', '纪录片', '痴女', '人妻', '巨乳', '萝莉', '潮吹', '肛交', '多人运动', '制服', '角色扮演', '素人', '单体作品'],
+      // ---- HTML 源（Top250 / 当前页面）----
       buildUrl(sourceId, keyword, page) {
         const p = page > 1 ? '&page=' + page : '';
         switch (sourceId) {
-          case 'hot_daily': return origin() + '/advanced_search?laosiji_rank=playback&lsj_period=daily&lsj_filter_by=high_score' + p;
-          case 'hot_weekly': return origin() + '/advanced_search?laosiji_rank=playback&lsj_period=weekly&lsj_filter_by=high_score' + p;
-          case 'hot_monthly': return origin() + '/advanced_search?laosiji_rank=playback&lsj_period=monthly&lsj_filter_by=high_score' + p;
           case 'top250': return origin() + '/advanced_search?handleTop=1&handleType=all&type_value=' + p;
-          case 'search': return origin() + '/search?q=' + encodeURIComponent(keyword || '') + p;
           case 'current': return origin() + location.pathname + location.search + (page > 1 ? (location.search ? '&' : '?') + 'page=' + page : '');
           default: return origin() + '/?page=' + page;
         }
@@ -154,6 +262,36 @@
           });
         });
         return out;
+      },
+      // ---- App API 源（热播榜 / 搜索）----
+      async apiFetch(sourceId, keyword) {
+        const src = this.sources.find((s) => s.id === sourceId);
+        if (!src || src.mode !== 'api') throw new Error('该数据源非 API 模式');
+        const params = typeof src.apiParams === 'function' ? src.apiParams(keyword) : Object.assign({}, src.apiParams);
+        log('API 请求:', src.apiPath, JSON.stringify(params));
+        const data = await jdbApiGet(src.apiPath, params);
+        const list = (data && data.movies) ? data.movies : [];
+        if (!list.length) { log('API 返回 0 部影片'); return []; }
+        log('API 返回', list.length, '部，正在补全评分…');
+        const movies = list.map((m, i) => jdbMovieFromApi(m, 0, i));
+        await this.fillScores(movies);
+        return movies;
+      },
+      // 对前 N 部并行拉详情补 score（5 分制字符串）
+      async fillScores(movies) {
+        const top = movies.slice(0, CONFIG.scoreFetchN);
+        await Promise.all(top.map(async (m) => {
+          if (!m._apiId) return;
+          try {
+            const d = await jdbApiGet('/api/v4/movies/' + m._apiId);
+            const mv = (d && d.movie) ? d.movie : d;
+            const s = mv && mv.score;
+            const r = s != null ? parseFloat(s) : NaN;
+            m.rating = isNaN(r) ? null : r;
+          } catch (e) { /* 补分失败不影响推荐 */ }
+        }));
+        const got = movies.filter((m) => m.rating != null).length;
+        log('评分补全:', got + '/' + top.length, '部有评分');
       },
     },
 
@@ -209,10 +347,11 @@
   // 综合分 = w_r * 评分归一 + w_p * 热度归一
   function normalizeRating(r) {
     if (r == null) return null;
-    // javdb 评分 0-10；奇葩值做个夹紧
     let v = r;
-    if (v > 10) v = v / 10;
-    return Math.max(0, Math.min(1, v / 10));
+    if (v > 10) v = v / 10;          // 百分制 → 0~1
+    else if (v <= 5) v = v / 5;      // 5 分制（JavDB App API 详情）
+    else v = v / 10;                 // 10 分制（JavDB 网页角标）
+    return Math.max(0, Math.min(1, v));
   }
 
   function buildCandidates(movies, sourceId) {
@@ -370,13 +509,14 @@
   async function runRecommend(randomize) {
     const site = detectSite();
     const ad = adapters[site];
-    const sourceId = panel.querySelector('#jvr-source').value;
+    let sourceId = panel.querySelector('#jvr-source').value;
     let keyword = panel.querySelector('#jvr-kw').value.trim();
     const cat = panel.querySelector('#jvr-cat').value;
 
-    // 分类 + 关键字组合：若选了分类且数据源非搜索，则把分类并入关键字走搜索
-    if (cat && sourceId !== 'search') {
-      keyword = keyword ? (keyword + ' ' + cat) : cat;
+    // 分类 + 关键字组合：分类并入关键字；若选了分类/关键字但当前是热播榜，则改用搜索源
+    if (cat || keyword) {
+      keyword = ((keyword || '') + ' ' + (cat || '')).trim();
+      if (sourceId.indexOf('hot_') === 0) sourceId = 'search';
     }
     GM_setValue('jvr_last', { source: sourceId, cat, kw: keyword });
 
@@ -389,19 +529,24 @@
     }
 
     try {
+      const src = ad.sources.find((s) => s.id === sourceId);
       let all = [];
-      let offset = 0;
-      for (let p = 1; p <= CONFIG.fetchPages; p++) {
-        const url = ad.buildUrl(sourceId, keyword, p);
-        log('抓取:', url);
-        const html = await gmFetch(url);
-        const doc = parseDoc(html);
-        const movies = ad.parse(doc, offset, { sourceId });
-        if (!movies.length) { log('第', p, '页无影片，停止翻页'); break; }
-        log('第', p, '页解析到', movies.length, '部');
-        all = all.concat(movies);
-        offset += movies.length;
-        if (p < CONFIG.fetchPages) await sleep(CONFIG.pageDelay);
+      if (src && src.mode === 'api') {
+        all = await ad.apiFetch(sourceId, keyword);
+      } else {
+        let offset = 0;
+        for (let p = 1; p <= CONFIG.fetchPages; p++) {
+          const url = ad.buildUrl(sourceId, keyword, p);
+          log('抓取:', url);
+          const html = await gmFetch(url);
+          const doc = parseDoc(html);
+          const movies = ad.parse(doc, offset, { sourceId });
+          if (!movies.length) { log('第', p, '页无影片，停止翻页'); break; }
+          log('第', p, '页解析到', movies.length, '部');
+          all = all.concat(movies);
+          offset += movies.length;
+          if (p < CONFIG.fetchPages) await sleep(CONFIG.pageDelay);
+        }
       }
       if (!all.length) {
         resultsEl.innerHTML = '<div class="jvr-empty">未抓到任何影片，检查选择器/网络</div>';
@@ -431,7 +576,8 @@
     list.forEach((m, i) => {
       const item = document.createElement('div');
       item.className = 'jvr-item';
-      const score = m.rating != null ? m.rating.toFixed(2) : '无评分';
+      const isApiScore = m.source === 'api';
+      const score = m.rating != null ? (m.rating.toFixed(2) + (isApiScore ? ' (5分制)' : '')) : '无评分';
       item.innerHTML = `
         <img src="${m.cover}" referrerpolicy="no-referrer" alt="">
         <div class="jvr-meta">
