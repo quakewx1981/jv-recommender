@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         JAV 智能推荐 (javdb / javbus)
 // @namespace    https://github.com/quakewx1981/jv-recommender
-// @version      1.01.004
+// @version      1.01.005
 // @description  根据影片评分与热度综合评定，推荐 10 部影片；支持分类/关键字筛选与随机换一批。
 // @author       浮云
 // @match        https://www.javdb.com/*
@@ -21,7 +21,7 @@
 // @connect      www.javbus.com
 // 升级版本时，请同步修改下方两个 URL 里的文件名（保持版本号一致）
 // @updateURL    https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender.meta.js
-// @downloadURL  https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender-1.01.004.user.js
+// @downloadURL  https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender-1.01.005.user.js
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -33,11 +33,15 @@
   /* ============================== 配置区 ============================== */
   // 想调权重 / 抓几页 / 改选择器，都改这里。
   const CONFIG = {
-    version: '1.01.004',
+    version: '1.01.005',
     recommendCount: 10,      // 推荐数量
     fetchPages: 5,           // HTML 数据源最多抓取的列表页数（候选池大小）
-    scoreFetchN: 15,         // App API 源：对前 N 部并行补全评分
-    pageDelay: 250,          // 翻页抓取间隔(ms)，避免被限流
+    searchPages: 3,          // 搜索源抓取页数（每页 pageSize 部，实测 3 页约 120 部候选）
+    pageSize: 40,            // 搜索每页数量（API limit）
+    scoreFetchN: 24,         // 补全详情的候选数（并发抓取，实测 24 部约 1.7s）
+    concurrency: 8,          // 详情补全并发数（过高易被限流）
+    minWatched: 200,         // 看过人数低于此值不推荐（无该数据的条目保留）
+    pageDelay: 250,          // HTML 翻页抓取间隔(ms)，避免被限流
     weights: { rating: 0.6, popularity: 0.4 }, // 综合评分权重
     // 贝叶斯加权评分（借鉴 Javdb 增强脚本）：W = (rb*score + m*C) / (rb + m)
     // rb=评分人数，m=基准人数(虚拟评分人数，越大越保守)，C=基准分(5分制，亦为隐藏低分阈值)
@@ -107,6 +111,26 @@
     if (v == null) return null;
     const n = parseFloat(v);
     return isNaN(n) ? null : n;
+  }
+
+  // 分批并发执行（避免一次性发过多请求被限流）
+  async function mapLimit(items, limit, fn) {
+    const out = [];
+    for (let i = 0; i < items.length; i += limit) {
+      const batch = items.slice(i, i + limit);
+      const r = await Promise.all(batch.map(fn));
+      for (const x of r) out.push(x);
+    }
+    return out;
+  }
+
+  // 详情缓存：同一部影片不重复请求（借鉴 JavdbBuddy 的多层缓存思路）
+  const detailCache = new Map();
+  async function fetchDetailCached(id) {
+    if (detailCache.has(id)) return detailCache.get(id);
+    const d = await jdbApiGet('/api/v4/movies/' + id);
+    detailCache.set(id, d);
+    return d;
   }
 
   function sleep(ms) { return new Promise((res) => setTimeout(res, ms)); }
@@ -236,7 +260,8 @@
         { id: 'hot_weekly', label: '热播周榜', mode: 'api', apiPath: '/api/v1/rankings/playback', apiParams: { filter_by: 'high_score', period: 'weekly' } },
         { id: 'hot_monthly', label: '热播月榜', mode: 'api', apiPath: '/api/v1/rankings/playback', apiParams: { filter_by: 'high_score', period: 'monthly' } },
         { id: 'top250', label: 'Top250', mode: 'html' },
-        { id: 'search', label: '关键字搜索', mode: 'api', apiPath: '/api/v2/search', apiParams: (kw) => ({ q: kw || '' }) },
+        // 搜索由服务端按评分排序(movie_sort_by=score)并翻多页，从全站候选中产生结果
+        { id: 'search', label: '关键字搜索', mode: 'api', paged: true, apiPath: '/api/v2/search', apiParams: (kw) => ({ q: kw || '', movie_sort_by: 'score' }) },
         { id: 'current', label: '当前页面', mode: 'html' },
       ],
       // 常见分类（按名称走搜索，近似分类筛选）
@@ -282,12 +307,27 @@
       async apiFetch(sourceId, keyword) {
         const src = this.sources.find((s) => s.id === sourceId);
         if (!src || src.mode !== 'api') throw new Error('该数据源非 API 模式');
-        const params = typeof src.apiParams === 'function' ? src.apiParams(keyword) : Object.assign({}, src.apiParams);
-        log('API 请求:', src.apiPath, JSON.stringify(params));
-        const data = await jdbApiGet(src.apiPath, params);
-        const list = (data && data.movies) ? data.movies : [];
+        const base = typeof src.apiParams === 'function' ? src.apiParams(keyword) : Object.assign({}, src.apiParams);
+        // 搜索源翻多页，从全站候选中产生结果（服务端已按评分排序）
+        const pages = src.paged ? CONFIG.searchPages : 1;
+        const t0 = Date.now();
+        const pageNums = [];
+        for (let p = 1; p <= pages; p++) pageNums.push(p);
+        const results = await mapLimit(pageNums, pages, async (pg) => {
+          const params = Object.assign({}, base, { limit: CONFIG.pageSize, page: pg });
+          try {
+            const data = await jdbApiGet(src.apiPath, params);
+            return (data && data.movies) ? data.movies : [];
+          } catch (e) { log('第', pg, '页失败:', e.message); return []; }
+        });
+        // 多页合并 + 按 id 去重
+        let list = [];
+        const seen = new Set();
+        results.forEach((arr) => (arr || []).forEach((m) => {
+          if (m && m.id && !seen.has(m.id)) { seen.add(m.id); list.push(m); }
+        }));
         if (!list.length) { log('API 返回 0 部影片'); return []; }
-        log('API 返回', list.length, '部，正在补全评分…');
+        log('候选', list.length, '部（' + ((Date.now() - t0) / 1000).toFixed(1) + 's），正在补全评分…');
         const movies = list.map((m, i) => jdbMovieFromApi(m, 0, i));
         await this.fillScores(movies);
         return movies;
@@ -295,21 +335,25 @@
       // 对前 N 部并行拉详情，补评分 / 评分人数 / 想看·看过数
       async fillScores(movies) {
         const top = movies.slice(0, CONFIG.scoreFetchN);
-        await Promise.all(top.map(async (m) => {
-          if (!m._apiId) return;
+        let done = 0;
+        await mapLimit(top, CONFIG.concurrency, async (m) => {
+          if (!m._apiId) { done++; return; }
           try {
-            const d = await jdbApiGet('/api/v4/movies/' + m._apiId);
+            const d = await fetchDetailCached(m._apiId);
             const mv = (d && d.movie) ? d.movie : d;
-            if (!mv) return;
-            const s = mv.score;
-            const r = s != null ? parseFloat(s) : NaN;
-            m.rating = isNaN(r) ? null : r;
-            m.reviews = toNum(mv.reviews_count);
-            m.wantWatch = toNum(mv.want_watch_count);
-            m.watched = toNum(mv.watched_count);
-            m.magnets = toNum(mv.magnets_count);
+            if (mv) {
+              const s = mv.score;
+              const r = s != null ? parseFloat(s) : NaN;
+              m.rating = isNaN(r) ? null : r;
+              m.reviews = toNum(mv.reviews_count);
+              m.wantWatch = toNum(mv.want_watch_count);
+              m.watched = toNum(mv.watched_count);
+              m.magnets = toNum(mv.magnets_count);
+            }
           } catch (e) { /* 补分失败不影响推荐 */ }
-        }));
+          done++;
+          if (done % 8 === 0 || done === top.length) log('补全进度:', done + '/' + top.length);
+        });
         const got = movies.filter((m) => m.rating != null).length;
         log('详情补全:', got + '/' + top.length, '部（评分/评分人数/想看数）');
       },
@@ -589,6 +633,14 @@
     GM_setValue('jvr_last', { source: sourceId, cat, kw: keyword, hide: CONFIG.bayes.hideLowScore });
 
     const resultsEl = panel.querySelector('#jvr-results');
+
+    // 搜索源必须有“关键字/分类”，否则 API 返回 0（全站高分应走热播榜）
+    if (sourceId === 'search' && !keyword) {
+      resultsEl.innerHTML = '<div class="jvr-empty">搜索源需输入关键字/分类；否则请选“热播周榜”从全站高分影片推荐</div>';
+      log('搜索源：缺少关键字，已终止');
+      return;
+    }
+
     resultsEl.innerHTML = '<div class="jvr-empty">抓取候选中…</div>';
 
     if (randomize && lastPool.length) {
@@ -621,6 +673,12 @@
         return;
       }
       lastPool = buildCandidates(all, sourceId);
+      // 过滤冷门：看过人数低于阈值的不推荐（无该数据的条目保留，避免误杀）
+      if (CONFIG.minWatched > 0) {
+        const b = lastPool.length;
+        lastPool = lastPool.filter((m) => m.watched == null || m.watched >= CONFIG.minWatched);
+        if (b !== lastPool.length) log('过滤冷门: 移除', b - lastPool.length, '部（看过人数 < ' + CONFIG.minWatched + '）');
+      }
       if (CONFIG.bayes.hideLowScore) {
         const before = lastPool.length;
         lastPool = lastPool.filter((m) => m.bayes == null || m.bayes >= CONFIG.bayes.C);
