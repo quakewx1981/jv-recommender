@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         JAV 智能推荐 (javdb / javbus)
 // @namespace    https://github.com/quakewx1981/jv-recommender
-// @version      1.01.003
+// @version      1.01.004
 // @description  根据影片评分与热度综合评定，推荐 10 部影片；支持分类/关键字筛选与随机换一批。
 // @author       浮云
 // @match        https://www.javdb.com/*
@@ -21,7 +21,7 @@
 // @connect      www.javbus.com
 // 升级版本时，请同步修改下方两个 URL 里的文件名（保持版本号一致）
 // @updateURL    https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender.meta.js
-// @downloadURL  https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender-1.01.003.user.js
+// @downloadURL  https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender-1.01.004.user.js
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -33,12 +33,21 @@
   /* ============================== 配置区 ============================== */
   // 想调权重 / 抓几页 / 改选择器，都改这里。
   const CONFIG = {
-    version: '1.01.003',
+    version: '1.01.004',
     recommendCount: 10,      // 推荐数量
     fetchPages: 5,           // HTML 数据源最多抓取的列表页数（候选池大小）
     scoreFetchN: 15,         // App API 源：对前 N 部并行补全评分
     pageDelay: 250,          // 翻页抓取间隔(ms)，避免被限流
     weights: { rating: 0.6, popularity: 0.4 }, // 综合评分权重
+    // 贝叶斯加权评分（借鉴 Javdb 增强脚本）：W = (rb*score + m*C) / (rb + m)
+    // rb=评分人数，m=基准人数(虚拟评分人数，越大越保守)，C=基准分(5分制，亦为隐藏低分阈值)
+    bayes: {
+      m: 200,           // 基准人数（越大越需要真实评分才能摆脱基准分）
+      C: 3.75,          // 基准分，同时是隐藏低分的阈值
+      CMax: 4.75,       // 100% 热度对应分（仅影响颜色与归一上界）
+      curveFactor: 0.5, // 热力色曲线：<1 拉开低分差异，>1 拉开高分差异
+      hideLowScore: false, // 是否隐藏加权分低于 C 的影片
+    },
     debug: true,             // 面板内调试日志
     // javdb 卡片选择器（如站点改版，按 F12 核对后改这里）
     dom: {
@@ -92,6 +101,12 @@
         onerror: (e) => reject(new Error('NETERR ' + url)),
       });
     });
+  }
+
+  function toNum(v) {
+    if (v == null) return null;
+    const n = parseFloat(v);
+    return isNaN(n) ? null : n;
   }
 
   function sleep(ms) { return new Promise((res) => setTimeout(res, ms)); }
@@ -277,7 +292,7 @@
         await this.fillScores(movies);
         return movies;
       },
-      // 对前 N 部并行拉详情补 score（5 分制字符串）
+      // 对前 N 部并行拉详情，补评分 / 评分人数 / 想看·看过数
       async fillScores(movies) {
         const top = movies.slice(0, CONFIG.scoreFetchN);
         await Promise.all(top.map(async (m) => {
@@ -285,13 +300,18 @@
           try {
             const d = await jdbApiGet('/api/v4/movies/' + m._apiId);
             const mv = (d && d.movie) ? d.movie : d;
-            const s = mv && mv.score;
+            if (!mv) return;
+            const s = mv.score;
             const r = s != null ? parseFloat(s) : NaN;
             m.rating = isNaN(r) ? null : r;
+            m.reviews = toNum(mv.reviews_count);
+            m.wantWatch = toNum(mv.want_watch_count);
+            m.watched = toNum(mv.watched_count);
+            m.magnets = toNum(mv.magnets_count);
           } catch (e) { /* 补分失败不影响推荐 */ }
         }));
         const got = movies.filter((m) => m.rating != null).length;
-        log('评分补全:', got + '/' + top.length, '部有评分');
+        log('详情补全:', got + '/' + top.length, '部（评分/评分人数/想看数）');
       },
     },
 
@@ -354,20 +374,52 @@
     return Math.max(0, Math.min(1, v));
   }
 
+  // 贝叶斯加权评分：W = (rb*score + m*C) / (rb + m)
+  // 评分人数为 0 时完全回归基准分 C；无评分则返回 null
+  function bayesScore(m) {
+    if (m.rating == null) return null;
+    const rb = (m.reviews != null && m.reviews > 0) ? m.reviews : 0;
+    const C = CONFIG.bayes.C, mm = CONFIG.bayes.m;
+    return (rb * m.rating + mm * C) / (rb + mm);
+  }
+
+  // 加权分归一到 [C, CMax] → 0~1
+  function heatNorm(b) {
+    if (b == null) return null;
+    const C = CONFIG.bayes.C, CMax = CONFIG.bayes.CMax;
+    if (CMax <= C) return 0;
+    return Math.max(0, Math.min(1, (b - C) / (CMax - C)));
+  }
+
+  // 热力色：0=蓝 → 0.5=绿 → 1=红（曲线只影响颜色，不影响排序）
+  function heatColor(heat) {
+    const h = Math.pow(Math.max(0, Math.min(1, heat == null ? 0 : heat)), CONFIG.bayes.curveFactor);
+    const r = h > 0.5 ? Math.round(255 * ((h - 0.5) * 2)) : 0;
+    const g = h < 0.5 ? Math.round(255 * (h * 2)) : Math.round(255 * (1 - (h - 0.5) * 2));
+    const b = h < 0.5 ? Math.round(255 * (1 - (h * 2))) : 0;
+    return 'rgb(' + r + ',' + g + ',' + b + ')';
+  }
+
   function buildCandidates(movies, sourceId) {
-    // 热度归一：列表越靠前越热门（排行榜本身即热度排序）
+    // 热度信号优先用真实数据（想看 + 看过）；数据源无该字段时退回列表位置
+    const popKey = (m) => (m.wantWatch || 0) + (m.watched || 0);
+    const hasPop = movies.some((m) => popKey(m) > 0);
+    const maxPop = Math.max(...movies.map(popKey), 1);
     const maxPos = Math.max(...movies.map((m) => m.position), 1);
     return movies.map((m) => {
-      const rNorm = normalizeRating(m.rating);
-      const pNorm = 1 - (m.position - 1) / Math.max(maxPos - 1, 1); // 0~1
+      const bayes = bayesScore(m);
+      const hNorm = heatNorm(bayes);
+      const pNorm = hasPop
+        ? popKey(m) / maxPop
+        : 1 - (m.position - 1) / Math.max(maxPos - 1, 1); // 0~1
       let composite;
-      if (rNorm == null) {
+      if (hNorm == null) {
         // 无评分站点（javbus）仅靠热度
         composite = pNorm;
       } else {
-        composite = CONFIG.weights.rating * rNorm + CONFIG.weights.popularity * pNorm;
+        composite = CONFIG.weights.rating * hNorm + CONFIG.weights.popularity * pNorm;
       }
-      return Object.assign({}, m, { rNorm, pNorm, composite });
+      return Object.assign({}, m, { bayes, hNorm, pNorm, composite });
     });
   }
 
@@ -445,6 +497,10 @@
         <select id="jvr-cat"><option value="">— 不限 —</option></select>
         <label>关键字（数据源选“关键字搜索”时生效）</label>
         <input id="jvr-kw" placeholder="如 SSIS, 女教师, 4K..." />
+        <label style="display:flex;flex-direction:row;align-items:center;gap:6px;margin-top:8px;">
+          <input type="checkbox" id="jvr-hide" style="width:auto;flex:none;" />
+          隐藏低分（加权分 &lt; <b id="jvr-ct">3.75</b>）
+        </label>
         <div class="jvr-row">
           <button class="jvr-go" id="jvr-run">推荐 10 部</button>
           <button class="jvr-rand" id="jvr-rand">随机换一批</button>
@@ -475,6 +531,14 @@
     panel.querySelector('#jvr-run').onclick = () => runRecommend(false);
     panel.querySelector('#jvr-rand').onclick = () => runRecommend(true);
 
+    const hideEl = panel.querySelector('#jvr-hide');
+    panel.querySelector('#jvr-ct').textContent = String(CONFIG.bayes.C);
+    hideEl.checked = !!CONFIG.bayes.hideLowScore;
+    hideEl.onchange = () => {
+      CONFIG.bayes.hideLowScore = hideEl.checked;
+      log('隐藏低分:', hideEl.checked ? '开启' : '关闭', '（阈值 ' + CONFIG.bayes.C + '）');
+    };
+
     makeDraggable(panel.querySelector('.jvr-h'), panel);
 
     // 恢复上次配置
@@ -483,6 +547,10 @@
       sel.value = last.source || sel.value;
       cat.value = last.cat || '';
       panel.querySelector('#jvr-kw').value = last.kw || '';
+      if (typeof last.hide === 'boolean') {
+        hideEl.checked = last.hide;
+        CONFIG.bayes.hideLowScore = last.hide;
+      }
     }
     log('站点识别:', site, '| 适配器已加载');
   }
@@ -518,7 +586,7 @@
       keyword = ((keyword || '') + ' ' + (cat || '')).trim();
       if (sourceId.indexOf('hot_') === 0) sourceId = 'search';
     }
-    GM_setValue('jvr_last', { source: sourceId, cat, kw: keyword });
+    GM_setValue('jvr_last', { source: sourceId, cat, kw: keyword, hide: CONFIG.bayes.hideLowScore });
 
     const resultsEl = panel.querySelector('#jvr-results');
     resultsEl.innerHTML = '<div class="jvr-empty">抓取候选中…</div>';
@@ -553,6 +621,11 @@
         return;
       }
       lastPool = buildCandidates(all, sourceId);
+      if (CONFIG.bayes.hideLowScore) {
+        const before = lastPool.length;
+        lastPool = lastPool.filter((m) => m.bayes == null || m.bayes >= CONFIG.bayes.C);
+        if (before !== lastPool.length) log('隐藏低分: 过滤', before - lastPool.length, '部（加权分 < ' + CONFIG.bayes.C + '）');
+      }
       log('候选池:', lastPool.length, '部 | 评分中…');
       const picked = randomize
         ? weightedSample(lastPool, CONFIG.recommendCount)
@@ -576,15 +649,22 @@
     list.forEach((m, i) => {
       const item = document.createElement('div');
       item.className = 'jvr-item';
-      const isApiScore = m.source === 'api';
-      const score = m.rating != null ? (m.rating.toFixed(2) + (isApiScore ? ' (5分制)' : '')) : '无评分';
+      const parts = [];
+      if (m.rating != null) parts.push('评分 ' + m.rating.toFixed(2) + '/5');
+      if (m.reviews != null) parts.push(m.reviews + '人评');
+      if ((m.wantWatch || 0) + (m.watched || 0) > 0) parts.push('想看' + (m.wantWatch || 0) + '/看过' + (m.watched || 0));
+      if (!parts.length) parts.push('无评分数据');
+      // 热力色：贝叶斯加权分 → 蓝(冷)→绿→红(热)
+      const c = m.bayes != null ? heatColor(m.hNorm) : 'rgb(154,164,178)';
+      const cA = c.replace('rgb(', 'rgba(').replace(')', ',0.2)');
+      const badge = m.bayes != null ? '加权 ' + m.bayes.toFixed(2) + ' · ' : '';
       item.innerHTML = `
         <img src="${m.cover}" referrerpolicy="no-referrer" alt="">
         <div class="jvr-meta">
           <a href="${m.url}" target="_blank" title="${m.title}">${i + 1}. ${m.uid || m.title}</a>
           <div class="jvr-sub">${m.title}</div>
-          <div class="jvr-sub">评分 ${score} · 热度 ${(m.pNorm * 100).toFixed(0)}%</div>
-          <span class="jvr-score">综合 ${(m.composite * 100).toFixed(1)}</span>
+          <div class="jvr-sub">${parts.join(' · ')} · 热度 ${(m.pNorm * 100).toFixed(0)}%</div>
+          <span class="jvr-score" style="background:${cA};color:${c}">${badge}综合 ${(m.composite * 100).toFixed(1)}</span>
         </div>`;
       el.appendChild(item);
     });
