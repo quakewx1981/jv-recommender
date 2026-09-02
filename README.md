@@ -23,5 +23,18 @@
 - 选择器默认值基于经验。若站点改版导致抓取为空，请用面板调试日志核对 `CONFIG.dom` 后手动调整。
 - 版本号格式 `1.01.001`，文件名与脚本内 `@version` 同步。
 
-## 更新
-重新安装 `.user.js` 即可；或开启 Tampermonkey 自动更新（指向本仓库 raw 文件）。
+## 更新 / 自动更新
+- 脚本已配置 `@updateURL` 与 `@downloadURL`，指向本仓库 raw，支持 Tampermonkey / Violentmonkey 自动更新：
+  - 检查更新：`jv-recommender.meta.js`（固定文件名，仅含版本信息，体积小、检查快）
+  - 下载更新：`jv-recommender-1.01.001.user.js`（带版本号）
+- 在扩展里对该脚本开启「检查更新 / 自动更新」即可，无需手动重装。
+
+### 发版步骤（每次升版本都要做）
+1. 修改脚本内 `@version` 为新版本（如 `1.01.002`）。
+2. 将脚本文件重命名为对应版本号（`jv-recommender-1.01.002.user.js`）。
+3. 同步修改脚本内 `@downloadURL` 末尾文件名、本 README「安装」步骤里的文件名。
+4. 重新生成 `jv-recommender.meta.js`：把其中 `@version` 与 `@downloadURL` 文件名一并更新到新版本。
+5. 提交并推送：
+   ```bash
+   git add -A && git commit -m "release: v1.01.002" && git push
+   ```
