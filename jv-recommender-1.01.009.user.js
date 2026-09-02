@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         JAV 智能推荐 (javdb / javbus)
 // @namespace    https://github.com/quakewx1981/jv-recommender
-// @version      1.01.008
+// @version      1.01.009
 // @description  根据影片评分与热度综合评定，推荐 10 部影片；支持分类/关键字筛选与随机换一批。
 // @author       浮云
 // @match        https://www.javdb.com/*
@@ -19,10 +19,11 @@
 // @connect      javbus.com
 // @connect      javbus.tv
 // @connect      www.javbus.com
-// @connect      *                        // 允许跨域加载图片 CDN（封面图 blob）
+// 允许跨域加载图片 CDN（封面图 blob）
+// @connect      *
 // 升级版本时，请同步修改下方两个 URL 里的文件名（保持版本号一致）
 // @updateURL    https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender.meta.js
-// @downloadURL  https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender-1.01.008.user.js
+// @downloadURL  https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender-1.01.009.user.js
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -34,7 +35,7 @@
   /* ============================== 配置区 ============================== */
   // 想调权重 / 抓几页 / 改选择器，都改这里。
   const CONFIG = {
-    version: '1.01.008',
+    version: '1.01.009',
     recommendCount: 10,      // 推荐数量
     fetchPages: 5,           // HTML 数据源最多抓取的列表页数（候选池大小）
     searchPages: 3,          // 搜索源抓取页数（每页 pageSize 部，实测 3 页约 120 部候选）
@@ -711,22 +712,29 @@
 
   // 用 GM_xhr 把封面图以 blob 拉回来，绕过浏览器 img 直接请求的防盗链/Referer 限制
   function loadCover(img, url) {
-    if (!url) return;
+    if (!url) { log('封面: URL 为空'); return; }
+    log('封面加载: ' + url);
     GM_xmlhttpRequest({
       method: 'GET',
       url: url,
-      responseType: 'blob',
+      responseType: 'arraybuffer',
       headers: { 'Referer': origin() },
       onload: (r) => {
+        log('封面响应: HTTP ' + r.status + ' size=' + (r.response ? r.response.byteLength : 0));
         if (r.status < 200 || r.status >= 300 || !r.response) return;
         try {
-          img.src = URL.createObjectURL(r.response);
+          const hdr = (r.responseHeaders || '').toLowerCase();
+          const m = hdr.match(/content-type:\s*([^;\r\n]+)/);
+          const type = m ? m[1].trim() : 'image/jpeg';
+          const blob = new Blob([r.response], { type });
+          img.src = URL.createObjectURL(blob);
           img.style.opacity = '1';
-        } catch (e) { /* ignore */ }
+          log('封面成功: blob size=' + blob.size);
+        } catch (e) { log('封面 blob 失败: ' + e.message); }
       },
-      onerror: () => {},
-      onabort: () => {},
-      ontimeout: () => {},
+      onerror: () => { log('封面网络错误: ' + url); },
+      onabort: () => { log('封面取消: ' + url); },
+      ontimeout: () => { log('封面超时: ' + url); },
     });
   }
 
