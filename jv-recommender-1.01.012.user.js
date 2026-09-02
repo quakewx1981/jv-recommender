@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         JAV 智能推荐 (javdb / javbus)
 // @namespace    https://github.com/quakewx1981/jv-recommender
-// @version      1.01.011
+// @version      1.01.012
 // @description  根据影片评分与热度综合评定，推荐 10 部影片；支持分类/关键字筛选与随机换一批。
 // @author       浮云
 // @match        https://www.javdb.com/*
@@ -23,7 +23,7 @@
 // @connect      *
 // 升级版本时，请同步修改下方两个 URL 里的文件名（保持版本号一致）
 // @updateURL    https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender.meta.js
-// @downloadURL  https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender-1.01.011.user.js
+// @downloadURL  https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender-1.01.012.user.js
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -35,7 +35,7 @@
   /* ============================== 配置区 ============================== */
   // 想调权重 / 抓几页 / 改选择器，都改这里。
   const CONFIG = {
-    version: '1.01.011',
+    version: '1.01.012',
     recommendCount: 10,      // 推荐数量
     fetchPages: 5,           // HTML 数据源最多抓取的列表页数（候选池大小）
     searchPages: 3,          // 搜索源抓取页数（每页 pageSize 部，实测 3 页约 120 部候选）
@@ -722,31 +722,40 @@
     return 'image/jpeg';
   }
 
-  // 用 GM_xhr 把封面图以 blob 拉回来，绕过浏览器 img 直接请求的防盗链/Referer 限制
+  // 用 GM_xhr 把封面图拉回来，绕过浏览器 img 直接请求的防盗链/Referer 限制
   function loadCover(img, url) {
     if (!url) { log('封面: URL 为空'); return; }
     log('封面加载: ' + url);
-    img.onerror = () => { log('封面 img.onerror: ' + url + ' | src=' + String(img.src).slice(0, 60)); };
+    img.onerror = () => { log('封面 img.onerror: ' + url + ' | w=' + img.naturalWidth); };
     img.onload = () => { log('封面 img.onload: ' + url + ' w=' + img.naturalWidth + ' h=' + img.naturalHeight); };
     GM_xmlhttpRequest({
       method: 'GET',
       url: url,
-      responseType: 'arraybuffer',
+      responseType: 'blob',
       headers: { 'Referer': origin(), 'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8' },
       onload: (r) => {
-        log('封面响应: HTTP ' + r.status + ' size=' + (r.response ? r.response.byteLength : 0));
-        if (r.status < 200 || r.status >= 300 || !r.response) return;
+        if (r.status < 200 || r.status >= 300 || !r.response) { log('封面失败: HTTP ' + r.status); return; }
         try {
-          const hdr = (r.responseHeaders || '').toLowerCase();
-          const mt = hdr.match(/content-type:\s*([^;\r\n]+)/);
-          const type = mt ? mt[1].trim() : mimeFromBuffer(r.response);
-          const blob = new Blob([r.response], { type });
+          // 兼容三种 TM 返回类型：Blob / 二进制字符串 / ArrayBuffer
+          let blob = null;
+          const resp = r.response;
+          if (typeof Blob !== 'undefined' && resp instanceof Blob) {
+            blob = resp;
+          } else if (resp instanceof ArrayBuffer) {
+            blob = new Blob([resp], { type: 'image/jpeg' });
+          } else if (typeof resp === 'string') {
+            const arr = new Uint8Array(resp.length);
+            for (let i = 0; i < resp.length; i++) arr[i] = resp.charCodeAt(i) & 0xff;
+            blob = new Blob([arr], { type: 'image/jpeg' });
+          }
+          if (!blob) { log('封面: 无法解析响应类型 ' + typeof resp); return; }
+          const type = (blob.type && blob.type.indexOf('image/') === 0) ? blob.type : 'image/jpeg';
           const reader = new FileReader();
           reader.onload = () => {
             const dataUrl = reader.result;
             img.src = dataUrl;
             img.style.opacity = '1';
-            log('封面成功: type=' + type + ' dataURL=' + dataUrl.slice(0, 80) + '...');
+            log('封面成功: type=' + type + ' dataURL=' + dataUrl.slice(0, 40) + '...');
           };
           reader.onerror = () => { log('封面 dataURL 失败: ' + url); };
           reader.readAsDataURL(blob);
