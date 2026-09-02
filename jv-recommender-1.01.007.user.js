@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         JAV 智能推荐 (javdb / javbus)
 // @namespace    https://github.com/quakewx1981/jv-recommender
-// @version      1.01.006
+// @version      1.01.007
 // @description  根据影片评分与热度综合评定，推荐 10 部影片；支持分类/关键字筛选与随机换一批。
 // @author       浮云
 // @match        https://www.javdb.com/*
@@ -21,7 +21,7 @@
 // @connect      www.javbus.com
 // 升级版本时，请同步修改下方两个 URL 里的文件名（保持版本号一致）
 // @updateURL    https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender.meta.js
-// @downloadURL  https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender-1.01.006.user.js
+// @downloadURL  https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender-1.01.007.user.js
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -33,7 +33,7 @@
   /* ============================== 配置区 ============================== */
   // 想调权重 / 抓几页 / 改选择器，都改这里。
   const CONFIG = {
-    version: '1.01.006',
+    version: '1.01.007',
     recommendCount: 10,      // 推荐数量
     fetchPages: 5,           // HTML 数据源最多抓取的列表页数（候选池大小）
     searchPages: 3,          // 搜索源抓取页数（每页 pageSize 部，实测 3 页约 120 部候选）
@@ -512,7 +512,7 @@
 
   function buildPanel() {
     GM_addStyle(`
-      #jvr-panel { position: fixed; top: 12px; right: 12px; z-index: 999999; width: 340px;
+      #jvr-panel { position: fixed; top: 12px; right: 12px; z-index: 999999; width: 460px;
         background: #1c1f26; color: #e8e8e8; border: 1px solid #333; border-radius: 10px;
         font: 13px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
         box-shadow: 0 8px 30px rgba(0,0,0,.5); overflow: hidden; }
@@ -520,7 +520,7 @@
         padding: 8px 12px; background:#262b36; cursor:move; font-weight:600; }
       #jvr-panel .jvr-h button { background:#3a4150; color:#fff; border:none; border-radius:5px;
         padding:2px 8px; cursor:pointer; font-size:12px; }
-      #jvr-panel .jvr-b { padding: 10px 12px; max-height: 60vh; overflow:auto; }
+      #jvr-panel .jvr-b { padding: 12px 14px; max-height: 70vh; overflow:auto; }
       #jvr-panel label { display:block; margin: 6px 0 3px; color:#9aa4b2; font-size:12px; }
       #jvr-panel select, #jvr-panel input { width:100%; box-sizing:border-box; padding:6px 8px;
         background:#11151c; color:#e8e8e8; border:1px solid #3a4150; border-radius:6px; }
@@ -528,8 +528,10 @@
       #jvr-panel .jvr-row button { flex:1; padding:8px; border:none; border-radius:7px; cursor:pointer;
         font-weight:600; color:#fff; }
       #jvr-panel .jvr-go { background:#2f7d4f; } #jvr-panel .jvr-rand { background:#3a5a8c; }
-      #jvr-panel .jvr-item { display:flex; gap:8px; padding:7px 0; border-bottom:1px solid #2a2f3a; }
-      #jvr-panel .jvr-item img { width:46px; height:62px; object-fit:cover; border-radius:4px; background:#000; }
+      #jvr-panel .jvr-item { display:flex; gap:12px; padding:10px 0; border-bottom:1px solid #2a2f3a; }
+      #jvr-panel .jvr-thumb { width:90px; height:126px; flex:none; border-radius:6px; overflow:hidden;
+        background:#151921 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40' viewBox='0 0 24 24' fill='none' stroke='%23555' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='3' width='18' height='18' rx='2' ry='2'/%3E%3Ccircle cx='8.5' cy='8.5' r='1.5'/%3E%3Cpolyline points='21 15 16 10 5 21'/%3E%3C/svg%3E") center/40px no-repeat; }
+      #jvr-panel .jvr-thumb img { width:100%; height:100%; object-fit:cover; display:block; }
       #jvr-panel .jvr-meta { flex:1; min-width:0; }
       #jvr-panel .jvr-meta a { color:#7fb2ff; text-decoration:none; font-weight:600;
         display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -728,7 +730,7 @@
       const cA = c.replace('rgb(', 'rgba(').replace(')', ',0.2)');
       const badge = m.bayes != null ? '加权 ' + m.bayes.toFixed(2) + ' · ' : '';
       item.innerHTML = `
-        <img src="${m.cover}" referrerpolicy="no-referrer" alt="">
+        <div class="jvr-thumb"><img src="${m.cover}" referrerpolicy="strict-origin-when-cross-origin" alt="" onerror="this.style.display='none';this.onerror=null;"></div>
         <div class="jvr-meta">
           <a href="${m.url}" target="_blank" title="${m.title}">${i + 1}. ${m.uid || m.title}</a>
           <div class="jvr-sub">${m.title}</div>
