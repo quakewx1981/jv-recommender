@@ -27,7 +27,7 @@
 
 ## 安装
 1. 安装浏览器扩展 Tampermonkey（或 Violentmonkey）。
-2. 将 `jv-recommender-1.01.022.user.js` 内容粘贴进「添加新脚本」并保存；或直接把该 `.user.js` 拖入扩展安装。
+2. 推荐安装稳定版 `jv-recommender.user.js`（无版本号）：把它的内容粘贴进「添加新脚本」并保存，或直接拖入扩展。**安装一次后，以后「检查更新」永远从固定 URL 拉取最新版，无需手动重装。** 历史带版本号文件（如 `jv-recommender-1.01.022.user.js`）保留作归档，不建议直接安装。
 3. 打开 javdb / javbus 任意页面，右上角出现面板即可使用。
 
 ## 说明 / 已知限制
@@ -36,17 +36,17 @@
 - 版本号格式 `1.01.001`，文件名与脚本内 `@version` 同步。
 
 ## 更新 / 自动更新
-- 脚本已配置 `@updateURL` 与 `@downloadURL`，指向本仓库 raw，支持 Tampermonkey / Violentmonkey 自动更新：
-  - 检查更新：`jv-recommender.meta.js`（固定文件名，仅含版本信息，体积小、检查快）
-  - 下载更新：`jv-recommender-1.01.022.user.js`（带版本号）
+- 稳定发布文件 `jv-recommender.user.js` 的 `@updateURL` 与 `@downloadURL` 均指向自身（固定文件名，不带版本号）。安装它之后，Tampermonkey / Violentmonkey 的「检查更新」始终拉取同一个 URL，永远拿到最新版，不会被版本号切换或 CDN 缓存坑到回退旧版。
 - 在扩展里对该脚本开启「检查更新 / 自动更新」即可，无需手动重装。
+- 若此前装过带版本号文件（如 `jv-recommender-1.01.017.user.js`）且更新异常，直接拖入 `jv-recommender.user.js` 覆盖安装一次即可归正。
 
 ### 发版步骤（每次升版本都要做）
 1. 修改脚本内 `@version` 为新版本（如 `1.01.002`）。
-2. 将脚本文件重命名为对应版本号（`jv-recommender-1.01.002.user.js`）。
-3. 同步修改脚本内 `@downloadURL` 末尾文件名、本 README「安装」步骤里的文件名。
-4. 重新生成 `jv-recommender.meta.js`：把其中 `@version` 与 `@downloadURL` 文件名一并更新到新版本。
-5. 提交并推送：
+2. 将脚本文件重命名为对应版本号（`jv-recommender-1.01.002.user.js`），作为历史归档快照。
+3. **覆盖稳定发布文件 `jv-recommender.user.js`**：把新版内容（含 `@version`）写入它，并确保其 `@updateURL` / `@downloadURL` 仍指向 `jv-recommender.user.js` 自身（不带版本号）。这是用户实际更新所拉的入口。
+4. 重新生成 `jv-recommender.meta.js`：把其中 `@version` 更新到新版本（downloadURL 保持指向稳定文件）。
+5. 同步本 README「安装 / 更新」步骤里的文件名与说明。
+6. 提交并推送：
    ```bash
    git add -A && git commit -m "release: v1.01.002" && git push
    ```

@@ -5,5 +5,5 @@
 // @author       浮云
 // @description  根据影片评分与热度综合评定，推荐 10 部影片；支持分类/关键字/年代筛选与随机换一批。
 // @updateURL    https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender.meta.js
-// @downloadURL  https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender-1.01.022.user.js
+// @downloadURL  https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender.user.js
 // ==/UserScript==

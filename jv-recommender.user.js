@@ -21,7 +21,7 @@
 // @connect      www.javbus.com
 // 允许跨域加载图片 CDN（封面图 blob）
 // @connect      *
-// 稳定发布文件：更新源固定指向 jv-recommender.user.js（无版本号），无需随版本号改文件名
+// 稳定发布文件：更新源固定指向本文件(jv-recommender.user.js)，无需随版本号改文件名
 // @updateURL    https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender.user.js
 // @downloadURL  https://raw.githubusercontent.com/quakewx1981/jv-recommender/main/jv-recommender.user.js
 // @run-at       document-idle
