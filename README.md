@@ -26,7 +26,7 @@
 
 ## 安装
 1. 安装浏览器扩展 Tampermonkey（或 Violentmonkey）。
-2. 将 `jv-recommender-1.01.017.user.js` 内容粘贴进「添加新脚本」并保存；或直接把该 `.user.js` 拖入扩展安装。
+2. 将 `jv-recommender-1.01.018.user.js` 内容粘贴进「添加新脚本」并保存；或直接把该 `.user.js` 拖入扩展安装。
 3. 打开 javdb / javbus 任意页面，右上角出现面板即可使用。
 
 ## 说明 / 已知限制
