@@ -1,3 +1,6 @@
 .workbuddy/
 .DS_Store
 *.log
+
+# 自用镜像站方案，不推送到公开仓库
+javdb-mirror/
